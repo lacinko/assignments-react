@@ -1,7 +1,8 @@
 import { CheckIcon, Cross1Icon } from "@radix-ui/react-icons";
-import React, { useState } from "react";
+import { useState } from "react";
 import styles from "./Form.module.css";
 
+import { Button } from "../Button";
 import { Input } from "./Input";
 
 type FormProps = {
@@ -27,12 +28,12 @@ export const Form = (props: FormProps) => {
             }}
         >
             <Input value={inputValue} onValueChange={(value) => setInputValue(value)} />
-            <button type={"submit"}>
+            <Button variant="icon" type="submit" aria-label="Confirm">
                 <CheckIcon />
-            </button>
-            <button type={"reset"}>
+            </Button>
+            <Button variant="icon" type="reset" aria-label="Cancel">
                 <Cross1Icon />
-            </button>
+            </Button>
         </form>
     );
 };

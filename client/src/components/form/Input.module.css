@@ -1,3 +1,16 @@
 .input {
+    padding: 4px 8px;
 
+    background-color: white;
+    border: 1px solid var(--olive-7);
+    border-radius: 5px;
+
+    color: var(--olive-12);
+    font: inherit;
+}
+
+.input:focus-visible {
+    outline: none;
+    border-color: var(--grass-9);
+    box-shadow: 0 0 0 1px var(--grass-9);
 }
