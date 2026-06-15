@@ -10,7 +10,13 @@ This document is the written record the assignment asks for:
 All tasks (B1–B2, F1–F9, UI1–UI3, SB1–SB3, S1) are implemented. Each was delivered as an
 **atomic commit whose message carries the task id** (e.g. `F4: edit todo label via inline Form …`);
 run `git log --oneline` to see the mapping. Verification: `tsc --noEmit`, `eslint`, and
-`vite build` all pass, and the S1 endpoint was exercised directly with `curl`.
+`vite build` all pass, the S1 endpoint was exercised directly with `curl`, and the full app was
+QA'd end-to-end in a headless browser (load, add/edit/complete/un-complete/delete, plus the
+server-down failure path).
+
+**Time spent: ~3 hours total** — reading the codebase and planning, implementing all tasks,
+the post-implementation self-review, and the follow-up robustness hardening (mutation error
+handling + `finishedAt` type) described in decision #8 below.
 
 The sections below state, for each task, **what the actual problem was** (grounded in the original
 code) and **how it was solved**.
@@ -32,8 +38,8 @@ type TodoItem = {
     id: number;
     label: string;
     isDone: boolean;
-    createdAt: number;   // epoch ms, set by server on POST
-    finishedAt?: number; // added by S1
+    createdAt: number;        // epoch ms, set by server on POST
+    finishedAt?: number | null; // added by S1; null once un-completed, absent before first completion
 };
 ```
 
@@ -100,7 +106,19 @@ Radix's `onCheckedChange` emits `boolean | "indeterminate"`, but `onItemDoneTogg
 `boolean`. Coerced with `checked === true` at the boundary so `"indeterminate"` can never leak into
 the data layer.
 
-### 6. Bugs fixed beyond the listed ones (README invites this)
+### 6. Mutation failures surface instead of being swallowed (post-review hardening)
+Originally `addItem/editLabel/toggleDone/deleteItem` were `async` with no `.catch`. The initial
+load surfaced errors, but a **failed mutation** (e.g. the server going down mid-session) silently
+did nothing *and* produced an unhandled promise rejection. They now run through a shared
+[`runMutation`](client/src/hooks/useTodos.ts) helper that captures failures into the existing
+`error` state and clears stale errors on success. [`App`](client/src/App.tsx) renders the alert
+**above the still-visible list** rather than blanking it, so a transient failure doesn't wipe the
+UI. **Reasoning:** this was the one real correctness gap from the self-review — an unhandled
+rejection is never acceptable, and a try/catch into the existing error channel is the minimal
+correct fix (no new toast/retry infrastructure needed). Verified in-browser by killing the API
+mid-session: the alert appears, no unhandled rejection fires, and a retry after restart clears it.
+
+### 7. Bugs fixed beyond the listed ones (README invites this)
 - `Footer` rendered `Done: {todoItems}` — wrong variable; both counters showed the todo count.
 - `ListItem` actions were **swapped/dead**: the trash button had no handler and the pencil button
   called `onItemDelete`. Edit and delete now do what their icons say.
@@ -109,9 +127,10 @@ the data layer.
 - Repo-wide: stories imported the renderer package `@storybook/react` directly, which the Storybook
   9 eslint plugin forbids; switched to `@storybook/react-vite` so `pnpm lint` is clean.
 
-### 7. Out of scope / deliberately not done
-- **No optimistic updates, no error toasts** — loading/error are surfaced as simple inline text in
-  `App`. Enough for the assignment; a production app would add retry/toasts.
+### 8. Out of scope / deliberately not done
+- **No optimistic updates; no toast/retry system** — load *and* mutation errors are surfaced as
+  simple inline alert text in `App` (see #6). Enough for the assignment; a production app would add
+  dismissible toasts, retry, and per-row error affordances.
 - **No automated tests** — given the 6-hour cap I prioritized feature completeness + Storybook over
   a test suite; `useTodos`/`api` are structured to be unit-testable if required.
 
@@ -136,6 +155,10 @@ The README asks how the AI was *directed*, not how much was used. Summary of the
   subject line, as the README requests — easy to review task-by-task.
 - **Verify continuously.** Typecheck/lint after risky edits; the S1 endpoint tested with `curl`
   (including the 404 path); a full production `vite build` as the final gate.
+- **Self-review + live QA loop.** After the first pass, a self-review flagged two issues (swallowed
+  mutation errors, the `finishedAt` type). These were fixed (decision #6) and then validated by
+  driving the running app in a headless browser — every CRUD flow plus the **server-down failure
+  path** — rather than trusting the diff alone.
 - **Direction over autopilot.** Key judgment calls (the F3/F4 prop-constraint tension, the S1
   one-way semantics) were decided explicitly and recorded above rather than left to the model's
   default — these are the points discussed in the section above.
@@ -299,8 +322,9 @@ server.patch("/items/:id/done", (req, res) => {
     res.jsonp(updated);
 });
 ```
-Then in the client (F5), call `PATCH /items/:id/done` when marking an item done. Add `finishedAt?`
-to the `TodoItem` type.
+Then in the client (F5), call `PATCH /items/:id/done` when marking an item done. The `TodoItem`
+type carries `finishedAt?: number | null` — `null` is what the server returns after un-completing
+(generic `PATCH { isDone:false, finishedAt:null }`), so the type models that explicitly.
 
 ---
 
