@@ -1,7 +1,19 @@
-# Assignment Solution Plan
+# Assignment Solution & Decisions
 
-This document walks through every task in [README.md](README.md). For each one it states
-**what the actual problem is** (grounded in the current code) and **how to solve it**.
+This document is the written record the assignment asks for:
+- **Key solutions and decisions** + reasoning in the complex areas — see
+  [Key decisions & reasoning](#key-decisions--reasoning-complex-areas).
+- **Agentic approach, tooling, and process** — see
+  [Agentic development process](#agentic-development-process).
+- A **per-task breakdown** (what the problem was, how it was solved) — the rest of the document.
+
+All tasks (B1–B2, F1–F9, UI1–UI3, SB1–SB3, S1) are implemented. Each was delivered as an
+**atomic commit whose message carries the task id** (e.g. `F4: edit todo label via inline Form …`);
+run `git log --oneline` to see the mapping. Verification: `tsc --noEmit`, `eslint`, and
+`vite build` all pass, and the S1 endpoint was exercised directly with `curl`.
+
+The sections below state, for each task, **what the actual problem was** (grounded in the original
+code) and **how it was solved**.
 
 ## Project map
 
@@ -37,6 +49,96 @@ The provided components are pure/presentational. The missing piece is a **statef
 fetches items, holds them in state, and passes data + callbacks down. Most Feature tasks are
 "wire this callback to the API and update state". Build that data layer first (F2), then the
 mutations (F3–F6) fall out naturally.
+
+---
+
+## Key decisions & reasoning (complex areas)
+
+These are the non-obvious choices made while implementing. The straightforward tasks (CSS
+alignment, default props, counts) are documented inline in the per-task sections below.
+
+### 1. Where the add/edit toggle state lives (F3, F4) — the main design decision
+**Constraint tension.** The README says *"Do not modify the API (props) of the provided
+components"*, yet F3/F4 require toggling the `Header`'s add button ↔ a `Form`, and the
+`ListItem`'s edit button ↔ a `Form`. `Header` only exposes `onItemAdd(label)` and `ListItem` only
+exposes `onItemLabelEdit(label)` — there is no `onAddClick`/`isEditing` prop to drive a toggle from
+the parent.
+
+**Decision.** Keep the toggle as **local view state inside `Header`/`ListItem`** (`useState`), and
+call the existing `onItemAdd` / `onItemLabelEdit` props on submit.
+
+**Reasoning.** This respects the literal restriction — the **prop signatures are untouched**, so the
+components remain drop-in compatible. It also matches the README's own split: the components stay
+responsible for *visual representation and view state*, while *data manipulation/persistence* lives
+in the container (`useTodos`). The alternative — adding an `isAdding`/`onToggle` prop — would change
+the public API and was rejected. Trade-off: a sliver of UI state now lives in otherwise-pure
+components, which I judged acceptable because it is purely presentational (open/closed), not data.
+
+### 2. Container architecture: one `useTodos` hook (F2–F8)
+All server state and mutations are centralized in [`useTodos`](client/src/hooks/useTodos.ts), kept
+separate from the transport layer in [`api/todos.ts`](client/src/api/todos.ts). `App` is a thin
+wiring layer. **Reasoning:** the provided components are pure, so exactly one stateful owner keeps
+data flow one-directional and the components trivially testable/reusable. Sorting (F7) and counts
+(F8) are `useMemo`-derived from a single `items` array — deriving rather than storing avoids
+state that can drift out of sync.
+
+### 3. Using the S1 endpoint only for the "done" direction (F5)
+`setDone(id, isDone)` calls the custom `PATCH /items/:id/done` endpoint **only when marking done**
+(so the server stamps `finishedAt`), and falls back to a generic `PATCH { isDone:false,
+finishedAt:null }` when un-checking. **Reasoning:** S1 is defined as a one-way "mark as done"
+operation; un-completing is not part of its contract, so I didn't overload it.
+
+### 4. State updates from server responses, not optimistic guesses
+Every mutation (`add/editLabel/toggleDone`) updates local state from the **object the server
+returns** (via a shared `upsert`), and `delete` removes by id after the request resolves.
+**Reasoning:** the server owns `id`, `createdAt`, and `finishedAt` — trusting the response keeps the
+client authoritative-source-of-truth correct without re-fetching the whole list. Trade-off: no
+optimistic UI; given the local json-server latency this is invisible and far simpler/safer.
+
+### 5. `CheckedState` → strict boolean (F5)
+Radix's `onCheckedChange` emits `boolean | "indeterminate"`, but `onItemDoneToggle` expects a
+`boolean`. Coerced with `checked === true` at the boundary so `"indeterminate"` can never leak into
+the data layer.
+
+### 6. Bugs fixed beyond the listed ones (README invites this)
+- `Footer` rendered `Done: {todoItems}` — wrong variable; both counters showed the todo count.
+- `ListItem` actions were **swapped/dead**: the trash button had no handler and the pencil button
+  called `onItemDelete`. Edit and delete now do what their icons say.
+- Mistyped exported type `LiteeItemProp` → `ListItemProps` (and references updated).
+- Removed unused `React` imports and the ignored-then-reintroduced `onItemAdd` wiring.
+- Repo-wide: stories imported the renderer package `@storybook/react` directly, which the Storybook
+  9 eslint plugin forbids; switched to `@storybook/react-vite` so `pnpm lint` is clean.
+
+### 7. Out of scope / deliberately not done
+- **No optimistic updates, no error toasts** — loading/error are surfaced as simple inline text in
+  `App`. Enough for the assignment; a production app would add retry/toasts.
+- **No automated tests** — given the 6-hour cap I prioritized feature completeness + Storybook over
+  a test suite; `useTodos`/`api` are structured to be unit-testable if required.
+
+---
+
+## Agentic development process
+
+The README asks how the AI was *directed*, not how much was used. Summary of the workflow:
+
+- **Tooling.** Claude Code (Opus 4.8) as the agent, driving the local toolchain (file edits, `git`,
+  `tsc`, `eslint`, `vite build`, `curl` against the running json-server).
+- **Read-before-write.** First action was reading the full README, both client/server `README`s,
+  and **every component + CSS module** before writing anything — so the plan was grounded in the
+  actual code (which surfaced the swapped handlers and the `Done`-counter bug that aren't in the
+  task list).
+- **Plan first, then execute.** This very document was produced as a plan (problem → approach per
+  task) and reviewed before implementation, then updated to reflect the as-built decisions.
+- **Explicit task tracking.** A todo list mirrored the README task ids; one item in progress at a
+  time, driving the **build order**: S1 → data layer → component wiring → derivations → styling →
+  Button/stories.
+- **Atomic, task-tagged commits.** Each task (or tight cluster) is its own commit with the id in the
+  subject line, as the README requests — easy to review task-by-task.
+- **Verify continuously.** Typecheck/lint after risky edits; the S1 endpoint tested with `curl`
+  (including the 404 path); a full production `vite build` as the final gate.
+- **Direction over autopilot.** Key judgment calls (the F3/F4 prop-constraint tension, the S1
+  one-way semantics) were decided explicitly and recorded above rather than left to the model's
+  default — these are the points discussed in the section above.
 
 ---
 
