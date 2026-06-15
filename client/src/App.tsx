@@ -19,7 +19,6 @@ export const App = () => {
                     {isLoading && <p>Loading…</p>}
                     {error && <p role="alert">{error}</p>}
                     {!isLoading &&
-                        !error &&
                         items.map((item) => (
                             <ListItem
                                 key={item.id}

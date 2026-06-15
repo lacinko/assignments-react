@@ -44,38 +44,59 @@ export const useTodos = () => {
         });
     }, []);
 
+    /**
+     * Runs a mutation, surfacing any failure (e.g. the server going down
+     * mid-session) into `error` instead of leaving it as an unhandled rejection.
+     * A successful mutation clears any stale error.
+     */
+    const runMutation = useCallback(async (action: () => Promise<void>) => {
+        try {
+            await action();
+            setError(null);
+        } catch (e: unknown) {
+            setError(e instanceof Error ? e.message : "The action could not be completed");
+        }
+    }, []);
+
     // F3: create a new todo item.
     const addItem = useCallback(
-        async (label: string) => {
-            const created = await todosApi.create({ label, isDone: false });
-            upsert(created);
-        },
-        [upsert],
+        (label: string) =>
+            runMutation(async () => {
+                const created = await todosApi.create({ label, isDone: false });
+                upsert(created);
+            }),
+        [runMutation, upsert],
     );
 
     // F4: edit a todo item's label.
     const editLabel = useCallback(
-        async (id: number, label: string) => {
-            const updated = await todosApi.updateLabel(id, label);
-            upsert(updated);
-        },
-        [upsert],
+        (id: number, label: string) =>
+            runMutation(async () => {
+                const updated = await todosApi.updateLabel(id, label);
+                upsert(updated);
+            }),
+        [runMutation, upsert],
     );
 
     // F5: toggle a todo item between "done" and "todo".
     const toggleDone = useCallback(
-        async (id: number, isDone: boolean) => {
-            const updated = await todosApi.setDone(id, isDone);
-            upsert(updated);
-        },
-        [upsert],
+        (id: number, isDone: boolean) =>
+            runMutation(async () => {
+                const updated = await todosApi.setDone(id, isDone);
+                upsert(updated);
+            }),
+        [runMutation, upsert],
     );
 
     // F6: delete a todo item.
-    const deleteItem = useCallback(async (id: number) => {
-        await todosApi.remove(id);
-        setItems((current) => current.filter((i) => i.id !== id));
-    }, []);
+    const deleteItem = useCallback(
+        (id: number) =>
+            runMutation(async () => {
+                await todosApi.remove(id);
+                setItems((current) => current.filter((i) => i.id !== id));
+            }),
+        [runMutation],
+    );
 
     const sortedItems = useMemo(() => sortTodos(items), [items]);
 
