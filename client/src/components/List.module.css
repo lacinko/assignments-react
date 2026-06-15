@@ -1,4 +1,12 @@
 .list {
     display: flex;
     flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+
+    /* B2: grow to fill the Layout so the Footer is pushed to the bottom. */
+    flex: 1 1 auto;
+
+    /* B1: separate the list content from the header above it. */
+    margin-top: 15px;
 }
