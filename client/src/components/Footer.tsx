@@ -1,4 +1,3 @@
-import React from "react";
 import styles from "./Footer.module.css";
 
 type FooterProps = {
@@ -7,12 +6,13 @@ type FooterProps = {
 };
 
 export const Footer = (props: FooterProps) => {
-    const { todoItems, doneItems } = props;
+    // F1: default the counters to 0 when no value is passed.
+    const { todoItems = 0, doneItems = 0 } = props;
 
     return (
         <footer className={styles.footer}>
-            Todo: {todoItems}
-            Done: {todoItems}
+            <span>Todo: {todoItems}</span>
+            <span>Done: {doneItems}</span>
         </footer>
     );
 };
