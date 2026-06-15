@@ -1,5 +1,5 @@
-import { action } from "@storybook/addon-actions";
 import { Meta, StoryObj } from "@storybook/react";
+import { action } from "storybook/actions";
 
 import { List } from "../List";
 import { ListItem, ListItemProps } from "../ListItem";
@@ -10,7 +10,7 @@ const meta = {
 } as Meta<typeof List>;
 export default meta;
 
-type Story = StoryObj<typeof ListItem>;
+type Story = StoryObj<typeof List>;
 
 const emptyHandlers: Pick<ListItemProps, "onItemLabelEdit" | "onItemDoneToggle" | "onItemDelete"> = {
     onItemLabelEdit: action("Edit requested"),
