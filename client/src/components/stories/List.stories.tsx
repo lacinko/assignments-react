@@ -2,7 +2,7 @@ import { action } from "@storybook/addon-actions";
 import { Meta, StoryObj } from "@storybook/react";
 
 import { List } from "../List";
-import { ListItem, LiteeItemProp } from "../ListItem";
+import { ListItem, ListItemProps } from "../ListItem";
 
 const meta = {
     title: "List",
@@ -12,7 +12,7 @@ export default meta;
 
 type Story = StoryObj<typeof ListItem>;
 
-const emptyHandlers: Pick<LiteeItemProp, "onItemLabelEdit" | "onItemDoneToggle" | "onItemDelete"> = {
+const emptyHandlers: Pick<ListItemProps, "onItemLabelEdit" | "onItemDoneToggle" | "onItemDelete"> = {
     onItemLabelEdit: action("Edit requested"),
     onItemDoneToggle: action("Done state change requested"),
     onItemDelete: action("Removal requested"),
@@ -21,9 +21,9 @@ const emptyHandlers: Pick<LiteeItemProp, "onItemLabelEdit" | "onItemDoneToggle" 
 export const WithItems: Story = {
     args: {
         children: [
-            <ListItem {...emptyHandlers} label={"Lorem ipsum dolor"} isDone={false} />,
-            <ListItem {...emptyHandlers} label={"Nullam Adipiscing Ridiculus Fusce"} isDone={false} />,
-            <ListItem {...emptyHandlers} label={"Mattis Tristique Parturient "} isDone={true} />,
+            <ListItem key={1} {...emptyHandlers} label={"Lorem ipsum dolor"} isDone={false} />,
+            <ListItem key={2} {...emptyHandlers} label={"Nullam Adipiscing Ridiculus Fusce"} isDone={false} />,
+            <ListItem key={3} {...emptyHandlers} label={"Mattis Tristique Parturient "} isDone={true} />,
         ],
     },
 };
