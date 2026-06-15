@@ -1,17 +1,12 @@
 .header {
     display: flex;
+    align-items: center;
+
+    /* UI1: keep the title on the left and the add button/form on the right. */
+    justify-content: space-between;
+    gap: 15px;
 }
 
-.button {
-    all: unset;
-
-    width: 25px;
-    height: 25px;
-
-    background-color: var(--grass-9);
-    border: 1px solid;
-    border-color: var(--olive-9);
-    border-radius: 50%;
-
-    color: #fff;
+.title {
+    margin: 0;
 }

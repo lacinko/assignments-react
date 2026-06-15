@@ -1,6 +1,9 @@
 import { PlusIcon } from "@radix-ui/react-icons";
-import React from "react";
+import { useState } from "react";
 import styles from "./Header.module.css";
+
+import { Button } from "./Button";
+import { Form } from "./form";
 
 type HeaderProps = {
     children: React.ReactNode;
@@ -8,14 +11,28 @@ type HeaderProps = {
 };
 
 export const Header = (props: HeaderProps) => {
-    const { children } = props;
+    const { children, onItemAdd } = props;
+
+    // F3: local view state toggling between the "add" button and the add Form.
+    const [isAdding, setIsAdding] = useState(false);
 
     return (
         <header className={styles.header}>
-            <h1>{children}</h1>
-            <button className={styles.button}>
-                <PlusIcon />
-            </button>
+            <h1 className={styles.title}>{children}</h1>
+            {isAdding ? (
+                <Form
+                    initialValue=""
+                    onSubmit={(value) => {
+                        onItemAdd(value);
+                        setIsAdding(false);
+                    }}
+                    onCancel={() => setIsAdding(false)}
+                />
+            ) : (
+                <Button variant="primary" aria-label="Add item" onClick={() => setIsAdding(true)}>
+                    <PlusIcon />
+                </Button>
+            )}
         </header>
     );
 };
