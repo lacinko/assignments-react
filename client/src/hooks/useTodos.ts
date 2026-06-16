@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
 
-import { sortTodos } from "../lib/sortTodos";
 import {
     useAddItemMutation,
     useDeleteItemMutation,
@@ -8,9 +7,19 @@ import {
     useGetItemsQuery,
     useSetDoneMutation,
 } from "../store/todosApi";
+import { TodoItem } from "../types";
 
 const errorMessage = (e: unknown, fallback: string): string =>
     e instanceof Error ? e.message : fallback;
+
+/**
+ * F7 sort order: "todo" items (not done) first, then by creation date
+ * descending. Returns a new array; never mutates the input.
+ */
+const sortTodos = (items: TodoItem[]): TodoItem[] =>
+    [...items].sort(
+        (a, b) => Number(a.isDone) - Number(b.isDone) || b.createdAt - a.createdAt,
+    );
 
 /**
  * Thin integration layer over the RTK Query `todosApi` slice. It keeps the
