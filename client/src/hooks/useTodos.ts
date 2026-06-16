@@ -1,111 +1,80 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
-import { todosApi } from "../api/todos";
-import { TodoItem } from "../types";
+import { sortTodos } from "../lib/sortTodos";
+import {
+    useAddItemMutation,
+    useDeleteItemMutation,
+    useEditLabelMutation,
+    useGetItemsQuery,
+    useSetDoneMutation,
+} from "../store/todosApi";
+
+const errorMessage = (e: unknown, fallback: string): string =>
+    e instanceof Error ? e.message : fallback;
 
 /**
- * F7 sort order: "todo" items first, then by creation date descending.
+ * Thin integration layer over the RTK Query `todosApi` slice. It keeps the
+ * same shape App already consumes (sorted items, counts, mutation callbacks),
+ * so the presentational components stay untouched while the data layer, cache,
+ * and invalidation are owned by RTK Query.
  */
-const sortTodos = (items: TodoItem[]): TodoItem[] =>
-    [...items].sort(
-        (a, b) => Number(a.isDone) - Number(b.isDone) || b.createdAt - a.createdAt,
-    );
-
 export const useTodos = () => {
-    const [items, setItems] = useState<TodoItem[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    // F2: load todo items.
+    const { data, isLoading, error: loadError } = useGetItemsQuery();
 
-    // F2: load todo items from the server on mount.
-    useEffect(() => {
-        let active = true;
+    const [addItemMutation] = useAddItemMutation();
+    const [editLabelMutation] = useEditLabelMutation();
+    const [setDoneMutation] = useSetDoneMutation();
+    const [deleteItemMutation] = useDeleteItemMutation();
 
-        todosApi
-            .list()
-            .then((loaded) => {
-                if (active) setItems(loaded);
-            })
-            .catch((e: unknown) => {
-                if (active) setError(e instanceof Error ? e.message : "Failed to load todo items");
-            })
-            .finally(() => {
-                if (active) setIsLoading(false);
-            });
+    // Mutation failures (e.g. the server going down mid-session) are surfaced
+    // here instead of being swallowed (decision #6); a success clears the
+    // stale error.
+    const [mutationError, setMutationError] = useState<string | null>(null);
 
-        return () => {
-            active = false;
-        };
-    }, []);
-
-    const upsert = useCallback((item: TodoItem) => {
-        setItems((current) => {
-            const exists = current.some((i) => i.id === item.id);
-            return exists ? current.map((i) => (i.id === item.id ? item : i)) : [...current, item];
-        });
-    }, []);
-
-    /**
-     * Runs a mutation, surfacing any failure (e.g. the server going down
-     * mid-session) into `error` instead of leaving it as an unhandled rejection.
-     * A successful mutation clears any stale error.
-     */
-    const runMutation = useCallback(async (action: () => Promise<void>) => {
+    const runMutation = useCallback(async (action: () => Promise<unknown>) => {
         try {
             await action();
-            setError(null);
+            setMutationError(null);
         } catch (e: unknown) {
-            setError(e instanceof Error ? e.message : "The action could not be completed");
+            setMutationError(errorMessage(e, "The action could not be completed"));
         }
     }, []);
 
     // F3: create a new todo item.
     const addItem = useCallback(
-        (label: string) =>
-            runMutation(async () => {
-                const created = await todosApi.create({ label, isDone: false });
-                upsert(created);
-            }),
-        [runMutation, upsert],
+        (label: string) => runMutation(() => addItemMutation({ label, isDone: false }).unwrap()),
+        [runMutation, addItemMutation],
     );
 
     // F4: edit a todo item's label.
     const editLabel = useCallback(
-        (id: number, label: string) =>
-            runMutation(async () => {
-                const updated = await todosApi.updateLabel(id, label);
-                upsert(updated);
-            }),
-        [runMutation, upsert],
+        (id: number, label: string) => runMutation(() => editLabelMutation({ id, label }).unwrap()),
+        [runMutation, editLabelMutation],
     );
 
     // F5: toggle a todo item between "done" and "todo".
     const toggleDone = useCallback(
-        (id: number, isDone: boolean) =>
-            runMutation(async () => {
-                const updated = await todosApi.setDone(id, isDone);
-                upsert(updated);
-            }),
-        [runMutation, upsert],
+        (id: number, isDone: boolean) => runMutation(() => setDoneMutation({ id, isDone }).unwrap()),
+        [runMutation, setDoneMutation],
     );
 
     // F6: delete a todo item.
     const deleteItem = useCallback(
-        (id: number) =>
-            runMutation(async () => {
-                await todosApi.remove(id);
-                setItems((current) => current.filter((i) => i.id !== id));
-            }),
-        [runMutation],
+        (id: number) => runMutation(() => deleteItemMutation(id).unwrap()),
+        [runMutation, deleteItemMutation],
     );
 
-    const sortedItems = useMemo(() => sortTodos(items), [items]);
+    const items = useMemo(() => sortTodos(data ?? []), [data]);
 
-    // F8: counts for the footer.
-    const doneCount = useMemo(() => items.filter((i) => i.isDone).length, [items]);
-    const todoCount = items.length - doneCount;
+    // F8: counts for the footer, derived from the cached list.
+    const doneCount = useMemo(() => (data ?? []).filter((i) => i.isDone).length, [data]);
+    const todoCount = (data?.length ?? 0) - doneCount;
+
+    const error = mutationError ?? (loadError ? "Failed to load todo items" : null);
 
     return {
-        items: sortedItems,
+        items,
         isLoading,
         error,
         todoCount,
