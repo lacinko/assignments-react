@@ -1,8 +1,7 @@
 import { configureStore } from "@reduxjs/toolkit";
 import { renderHook, waitFor } from "@testing-library/react";
-import { act } from "react";
+import { ReactNode, act } from "react";
 import { Provider } from "react-redux";
-import { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TodoItem } from "../types";
