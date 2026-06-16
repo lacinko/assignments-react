@@ -9,10 +9,15 @@ This document is the written record the assignment asks for:
 
 All tasks (B1–B2, F1–F9, UI1–UI3, SB1–SB3, S1) are implemented. Each was delivered as an
 **atomic commit whose message carries the task id** (e.g. `F4: edit todo label via inline Form …`);
-run `git log --oneline` to see the mapping. Verification: `tsc --noEmit`, `eslint`, and
-`vite build` all pass, the S1 endpoint was exercised directly with `curl`, and the full app was
+run `git log --oneline` to see the mapping. Verification: `tsc --noEmit`, `vite build`, and the
+`vitest` suite all pass, the S1 endpoint was exercised directly with `curl`, and the full app was
 QA'd end-to-end in a headless browser (load, add/edit/complete/un-complete/delete, plus the
-server-down failure path).
+server-down failure path). (`pnpm lint` is clean against the project's `.eslintrc.cjs`, but note
+that ESLint 9 needs `ESLINT_USE_FLAT_CONFIG=false` to read the legacy eslintrc — a pre-existing
+repo-config quirk, unrelated to the solution code.)
+
+The data layer was subsequently migrated from a hand-rolled `fetch` client + `useState` to
+**Redux Toolkit Query** to match the team's stack (Redux Toolkit, Vitest) — see decision #2.
 
 **Time spent: ~3 hours total** — reading the codebase and planning, implementing all tasks,
 the post-implementation self-review, and the follow-up robustness hardening (mutation error
@@ -25,10 +30,12 @@ code) and **how it was solved**.
 
 | Area | Path | Notes |
 | --- | --- | --- |
-| Client app entry | [client/src/App.tsx](client/src/App.tsx) | Currently static — no data layer. |
+| Client app entry | [client/src/App.tsx](client/src/App.tsx) | Thin wiring layer over `useTodos`. |
+| Data layer | [client/src/store/](client/src/store/) | RTK Query `todosApi` slice + store; `useTodos` integrates it. |
+| Sort util | [client/src/lib/sortTodos.ts](client/src/lib/sortTodos.ts) | F7 ordering, pure + unit-tested. |
 | UI components | [client/src/components/](client/src/components/) | Treat as **pure** presentational components. Do **not** change their props (README restriction). |
 | Form components | [client/src/components/form/](client/src/components/form/) | `Form` + `Input`, already controlled. |
-| Stories | `client/src/components/**/stories/` | Storybook CSF3. |
+| Stories / Tests | `client/src/**/stories/`, `client/src/**/*.test.*` | Storybook CSF3; Vitest suite. |
 | Server | [server/server.js](server/server.js), [server/db.json](server/db.json) | `json-server`, single `/items` resource on `http://localhost:3000`. |
 
 **Data shape** (from [server/db.json](server/db.json)):
@@ -80,13 +87,23 @@ in the container (`useTodos`). The alternative — adding an `isAdding`/`onToggl
 the public API and was rejected. Trade-off: a sliver of UI state now lives in otherwise-pure
 components, which I judged acceptable because it is purely presentational (open/closed), not data.
 
-### 2. Container architecture: one `useTodos` hook (F2–F8)
-All server state and mutations are centralized in [`useTodos`](client/src/hooks/useTodos.ts), kept
-separate from the transport layer in [`api/todos.ts`](client/src/api/todos.ts). `App` is a thin
-wiring layer. **Reasoning:** the provided components are pure, so exactly one stateful owner keeps
-data flow one-directional and the components trivially testable/reusable. Sorting (F7) and counts
-(F8) are `useMemo`-derived from a single `items` array — deriving rather than storing avoids
-state that can drift out of sync.
+### 2. Container architecture: RTK Query slice + one `useTodos` hook (F2–F8)
+Server state lives in a **Redux Toolkit Query** slice,
+[`todosApi`](client/src/store/todosApi.ts): a `getItems` query plus `addItem`/`editLabel`/
+`setDone`/`deleteItem` mutations, all sharing one `Todos` cache tag so every mutation
+auto-invalidates and refetches the list. [`useTodos`](client/src/hooks/useTodos.ts) is a thin
+integration layer over the generated hooks that keeps the exact shape `App` already consumed
+(sorted items, counts, mutation callbacks), so the pure presentational components stayed
+**completely untouched**. `App` remains a thin wiring layer.
+
+**Reasoning.** This is the team's own stack (Redux Toolkit). RTK Query subsumes what was
+previously hand-rolled — loading/error state, the manual `upsert`, and cache bookkeeping — with
+declarative cache invalidation, and is exercised end-to-end by the Vitest suite. The earlier
+version centralized the same logic in `useTodos` over a `fetch` client in `api/todos.ts`; the
+migration preserved the public hook contract, so it was a drop-in swap behind `App`. Sorting (F7)
+and counts (F8) remain **`useMemo`-derived** from the cached `items` array (in
+[`lib/sortTodos.ts`](client/src/lib/sortTodos.ts), unit-tested) — deriving rather than storing
+avoids state that can drift out of sync.
 
 ### 3. Using the S1 endpoint only for the "done" direction (F5)
 `setDone(id, isDone)` calls the custom `PATCH /items/:id/done` endpoint **only when marking done**
@@ -130,9 +147,25 @@ mid-session: the alert appears, no unhandled rejection fires, and a retry after 
 ### 8. Out of scope / deliberately not done
 - **No optimistic updates; no toast/retry system** — load *and* mutation errors are surfaced as
   simple inline alert text in `App` (see #6). Enough for the assignment; a production app would add
-  dismissible toasts, retry, and per-row error affordances.
-- **No automated tests** — given the 6-hour cap I prioritized feature completeness + Storybook over
-  a test suite; `useTodos`/`api` are structured to be unit-testable if required.
+  dismissible toasts, retry (trivial to add now via RTK Query's `refetch`/optimistic
+  `onQueryStarted`), and per-row error affordances.
+- **`react-hook-form` + `zod` not adopted** — both are on the team's stack and would be my choice in
+  a larger app (RHF for form state, a zod schema to validate the label *and* parse the server
+  response at the transport boundary). Here the `Form` is a single controlled input and the data
+  shape is fixed, so adding them earns little over the current controlled component; I left them out
+  deliberately rather than from unfamiliarity. RTK Query was the higher-value stack adoption and was
+  done (decision #2).
+
+### 9. Tests (Vitest)
+A focused [Vitest](https://vitest.dev/) suite covers the parts most worth protecting:
+- [`lib/sortTodos.test.ts`](client/src/lib/sortTodos.test.ts) — the F7 ordering rule (todo-before-done,
+  then `createdAt` desc) and that it doesn't mutate its input. Pure, no mocks.
+- [`hooks/useTodos.test.tsx`](client/src/hooks/useTodos.test.tsx) — drives the real RTK Query
+  transport against an in-memory `fetch` stand-in: load + sort + derived counts (F2/F7/F8), a load
+  failure surfacing into `error` (decision #6), and `addItem` performing a POST and reflecting the
+  new item after cache invalidation/refetch (F3).
+Run with `pnpm test` (`vitest run`) or `pnpm test:watch`. The data layer is structured so the
+remaining mutations are straightforward to add in the same style.
 
 ---
 
@@ -209,11 +242,11 @@ at render). Fix alongside the `doneItems` bug above.
 
 ### F2 — Load todo items
 **Problem.** [App.tsx](client/src/App.tsx) renders `<List />` with no children and no fetching.
-**Fix.** Add an API client (`getItems(): GET /items`) and load on mount. Recommended structure:
-- `src/api/todos.ts` — thin `fetch` wrapper around `http://localhost:3000/items`.
-- `src/hooks/useTodos.ts` — holds `items`, `loading`, `error`; runs the fetch in `useEffect`.
-- `App.tsx` maps items to `<ListItem>` inside `<List>`.
-Use `import.meta.env` / a constant for the base URL. Handle loading + error states.
+**Fix.** An RTK Query `getItems` query loads `GET /items` (the slice's `<Provider>` is wired in
+[main.tsx](client/src/main.tsx)); [`useTodos`](client/src/hooks/useTodos.ts) exposes the query's
+`data`/`isLoading`/`error`, and `App` maps the sorted items to `<ListItem>` inside `<List>`. The
+base URL comes from `import.meta.env.VITE_API_URL` (default `http://localhost:3000`). Loading and
+error states are handled in `App`.
 
 ### F3 — Add a todo item
 **Problem.** The "add" button in `Header` does nothing; there's no toggle to a `Form`.
