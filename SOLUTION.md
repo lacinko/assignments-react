@@ -22,7 +22,7 @@ form layer and transport boundary were then moved onto **react-hook-form + zod**
 stack — see decision #10. Finally the mutations were made **optimistic** with rollback, and the
 error alert became a dismissible **toast with retry** — see decision #11.
 
-**Time spent: ~4 hours total** — reading the codebase and planning, implementing all tasks,
+**Time spent: ~6 hours total** — reading the codebase and planning, implementing all tasks,
 the post-implementation self-review, and the follow-up robustness hardening (mutation error
 handling + `finishedAt` type) described in decision #6 below. (The react-hook-form + zod adoption
 in decision #10 was a later add-on beyond that.)
