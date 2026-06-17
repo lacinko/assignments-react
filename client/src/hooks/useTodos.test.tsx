@@ -98,6 +98,47 @@ describe("useTodos", () => {
         expect(result.current.items).toEqual([]);
     });
 
+    it("rolls back an optimistic delete on failure and retries it (decision #11)", async () => {
+        const items: TodoItem[] = [{ id: 1, label: "keep", isDone: false, createdAt: 100 }];
+        let failNextDelete = true;
+
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const request = input instanceof Request ? input : new Request(String(input), init);
+            const path = new URL(request.url).pathname;
+            const method = request.method.toUpperCase();
+
+            if (path === "/items" && method === "GET") return json(items);
+            if (path === "/items/1" && method === "DELETE") {
+                if (failNextDelete) {
+                    failNextDelete = false;
+                    return json({ error: "boom" }, 500);
+                }
+                const index = items.findIndex((i) => i.id === 1);
+                if (index !== -1) items.splice(index, 1);
+                return new Response(null, { status: 200 });
+            }
+            return json({ error: "unhandled" }, 404);
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { result } = renderHook(() => useTodos(), { wrapper: wrapper() });
+        await waitFor(() => expect(result.current.items).toHaveLength(1));
+
+        // First delete fails: the optimistic removal is rolled back and the error surfaces.
+        await act(async () => {
+            await result.current.deleteItem(1);
+        });
+        expect(result.current.error).toBe("The action could not be completed");
+        expect(result.current.items).toHaveLength(1);
+
+        // Retry re-runs the failed delete; this time it succeeds and the error clears.
+        await act(async () => {
+            result.current.retry();
+        });
+        await waitFor(() => expect(result.current.items).toHaveLength(0));
+        expect(result.current.error).toBeNull();
+    });
+
     it("adds an item via POST and reflects it after refetch (F3)", async () => {
         const { fetchMock, getItems } = makeServer([]);
         vi.stubGlobal("fetch", fetchMock);

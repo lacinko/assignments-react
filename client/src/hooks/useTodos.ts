@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import {
     useAddItemMutation,
@@ -29,7 +29,7 @@ const sortTodos = (items: TodoItem[]): TodoItem[] =>
  */
 export const useTodos = () => {
     // F2: load todo items.
-    const { data, isLoading, error: loadError } = useGetItemsQuery();
+    const { data, isLoading, error: loadError, refetch } = useGetItemsQuery();
 
     const [addItemMutation] = useAddItemMutation();
     const [editLabelMutation] = useEditLabelMutation();
@@ -38,14 +38,19 @@ export const useTodos = () => {
 
     // Mutation failures (e.g. the server going down mid-session) are surfaced
     // here instead of being swallowed (decision #6); a success clears the
-    // stale error.
+    // stale error. The failed action is retained so the toast can retry it
+    // (decision #11) — the optimistic patch was already rolled back, so a retry
+    // simply re-applies it.
     const [mutationError, setMutationError] = useState<string | null>(null);
+    const lastFailedAction = useRef<(() => Promise<unknown>) | null>(null);
 
     const runMutation = useCallback(async (action: () => Promise<unknown>) => {
         try {
             await action();
+            lastFailedAction.current = null;
             setMutationError(null);
         } catch (e: unknown) {
+            lastFailedAction.current = action;
             setMutationError(errorMessage(e, "The action could not be completed"));
         }
     }, []);
@@ -74,6 +79,21 @@ export const useTodos = () => {
         [runMutation, deleteItemMutation],
     );
 
+    // Toast actions (decision #11). Dismiss clears the error; retry re-runs the
+    // last failed mutation, or refetches when the failure was the initial load.
+    const dismissError = useCallback(() => {
+        lastFailedAction.current = null;
+        setMutationError(null);
+    }, []);
+
+    const retry = useCallback(() => {
+        if (lastFailedAction.current) {
+            void runMutation(lastFailedAction.current);
+        } else {
+            void refetch();
+        }
+    }, [runMutation, refetch]);
+
     const items = useMemo(() => sortTodos(data ?? []), [data]);
 
     // F8: counts for the footer, derived from the cached list.
@@ -92,5 +112,7 @@ export const useTodos = () => {
         editLabel,
         toggleDone,
         deleteItem,
+        retry,
+        dismissError,
     };
 };

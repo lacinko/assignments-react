@@ -1,0 +1,24 @@
+.toast {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+
+    margin-bottom: 12px;
+    padding: 8px 12px;
+
+    background-color: var(--tomato-3);
+    border: 1px solid var(--tomato-7);
+    border-radius: 5px;
+
+    color: var(--tomato-11);
+}
+
+.message {
+    flex: 1;
+}
+
+.actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}

@@ -19,7 +19,8 @@ repo-config quirk, unrelated to the solution code.)
 The data layer was subsequently migrated from a hand-rolled `fetch` client + `useState` to
 **Redux Toolkit Query** to match the team's stack (Redux Toolkit, Vitest) — see decision #2. The
 form layer and transport boundary were then moved onto **react-hook-form + zod**, also part of the
-stack — see decision #10.
+stack — see decision #10. Finally the mutations were made **optimistic** with rollback, and the
+error alert became a dismissible **toast with retry** — see decision #11.
 
 **Time spent: ~4 hours total** — reading the codebase and planning, implementing all tasks,
 the post-implementation self-review, and the follow-up robustness hardening (mutation error
@@ -132,12 +133,13 @@ Originally `addItem/editLabel/toggleDone/deleteItem` were `async` with no `.catc
 load surfaced errors, but a **failed mutation** (e.g. the server going down mid-session) silently
 did nothing *and* produced an unhandled promise rejection. They now run through a shared
 [`runMutation`](client/src/hooks/useTodos.ts) helper that captures failures into the existing
-`error` state and clears stale errors on success. [`App`](client/src/App.tsx) renders the alert
+`error` state and clears stale errors on success. [`App`](client/src/App.tsx) renders it
 **above the still-visible list** rather than blanking it, so a transient failure doesn't wipe the
-UI. **Reasoning:** this was the one real correctness gap from the self-review — an unhandled
-rejection is never acceptable, and a try/catch into the existing error channel is the minimal
-correct fix (no new toast/retry infrastructure needed). Verified in-browser by killing the API
-mid-session: the alert appears, no unhandled rejection fires, and a retry after restart clears it.
+UI (the alert later became the dismissible `Toast` — decision #11). **Reasoning:** this was the one
+real correctness gap from the self-review — an unhandled rejection is never acceptable, and a
+try/catch into the existing error channel is the minimal correct fix. Verified in-browser by killing
+the API mid-session: the alert appears, no unhandled rejection fires, and a retry after restart
+clears it.
 
 ### 7. Bugs fixed beyond the listed ones (README invites this)
 - `Footer` rendered `Done: {todoItems}` — wrong variable; both counters showed the todo count.
@@ -149,21 +151,24 @@ mid-session: the alert appears, no unhandled rejection fires, and a retry after 
   9 eslint plugin forbids; switched to `@storybook/react-vite` so `pnpm lint` is clean.
 
 ### 8. Out of scope / deliberately not done
-- **No optimistic updates; no toast/retry system** — load *and* mutation errors are surfaced as
-  simple inline alert text in `App` (see #6). Enough for the assignment; a production app would add
-  dismissible toasts, retry (trivial to add now via RTK Query's `refetch`/optimistic
-  `onQueryStarted`), and per-row error affordances.
+- **No per-row error affordances** — a failed mutation rolls back optimistically and surfaces one
+  shared `Toast` (decision #11) rather than annotating the specific row that failed. With
+  rollback + retry in place this is the last small step left; a production app might highlight the
+  offending row, but the shared toast already tells the user what failed and lets them retry.
 
 ### 9. Tests (Vitest)
 A focused [Vitest](https://vitest.dev/) suite covers the parts most worth protecting:
 - [`hooks/useTodos.test.tsx`](client/src/hooks/useTodos.test.tsx) — drives the real RTK Query
   transport against an in-memory `fetch` stand-in: load + the F7 sort (todo-before-done, then
   `createdAt` desc) + derived counts (F2/F7/F8), a load failure surfacing into `error` (decision #6),
-  a malformed payload caught at the transport boundary (decision #10), and `addItem` performing a
-  POST and reflecting the new item after cache invalidation/refetch (F3).
+  a malformed payload caught at the transport boundary (decision #10), `addItem` performing a POST
+  and reflecting the new item after cache invalidation/refetch (F3), and an optimistic delete that
+  rolls back on failure then succeeds on retry (decision #11).
 - [`components/form/Form.test.tsx`](client/src/components/form/Form.test.tsx) — the react-hook-form +
   zod behavior (decision #10): an empty/whitespace label is rejected with an inline alert, a valid
   entry submits the trimmed label, and cancel bypasses validation.
+- [`components/Toast.test.tsx`](client/src/components/Toast.test.tsx) — the error toast (decision
+  #11) renders its message as an alert and fires the retry / dismiss callbacks.
 Run with `pnpm test` (`vitest run`) or `pnpm test:watch`. The data layer is structured so the
 remaining mutations are straightforward to add in the same style.
 
@@ -185,12 +190,27 @@ Both are on the team's stack. They're now wired in two places, with one zod sche
 - **One source of truth.** `TodoItem`/`NewTodoItem` in [`types.ts`](client/src/types.ts) are now
   `z.infer`-ed from `todoItemSchema`, so the runtime check and the static type cannot drift.
 
-**Reasoning.** This was originally left out as low-value for a single fixed-shape field (former
-decision #8). On reflection the schema-as-source-of-truth + parse-at-the-boundary pattern is exactly
-where these libraries pay off even at this size, and it matches the stack; the cost stayed contained
-because the controlled `Input` plugged into RHF via `Controller` with no prop changes. Covered by
-[`Form.test.tsx`](client/src/components/form/Form.test.tsx) (empty rejected, trimmed submit, cancel)
-and a transport-boundary case in `useTodos.test.tsx` (decision #9).
+### 11. Optimistic updates + dismissible toast with retry
+The last item from the former "out of scope" list (decision #8), in two halves:
+
+- **Optimistic updates (data layer).** Each mutation in
+  [`todosApi`](client/src/store/todosApi.ts) applies an optimistic patch to the cached `getItems`
+  list in `onQueryStarted` (add appends a placeholder-id item; edit/setDone patch the item in place;
+  delete splices it out), so the UI reacts instantly. A shared `rollbackOnError` helper `undo()`s
+  the patch if the request rejects — and because `invalidatesTags` fires only on success, a failed
+  mutation never leaves the cache dirty. On success the tag invalidation refetches the authoritative
+  list, correcting server-owned fields (e.g. the exact `finishedAt`).
+- **Toast/retry (UI).** The inline alert from decision #6 became a hand-rolled, dismissible
+  [`Toast`](client/src/components/Toast.tsx) (no component library, per the README) with a **Retry**
+  action. [`useTodos`](client/src/hooks/useTodos.ts) retains the last failed action so `retry`
+  re-runs it (the optimistic patch was already rolled back, so a retry just re-applies it), falling
+  back to `refetch` when the failure was the initial load; `dismissError` clears the banner.
+
+**Reasoning.** Originally deferred as low value, but it's a small, cohesive increment on top of RTK
+Query and the existing error channel, and it directly improves perceived latency and recoverability.
+Per-row error affordances remain the one deliberate omission (decision #8). Covered by
+[`Toast.test.tsx`](client/src/components/Toast.test.tsx) and an optimistic rollback-and-retry case in
+`useTodos.test.tsx`.
 
 ---
 
