@@ -3,3 +3,8 @@
     align-items: center;
     gap: 4px;
 }
+
+.error {
+    color: var(--tomato-11);
+    font-size: 0.8rem;
+}

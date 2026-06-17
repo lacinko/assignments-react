@@ -17,11 +17,14 @@ that ESLint 9 needs `ESLINT_USE_FLAT_CONFIG=false` to read the legacy eslintrc �
 repo-config quirk, unrelated to the solution code.)
 
 The data layer was subsequently migrated from a hand-rolled `fetch` client + `useState` to
-**Redux Toolkit Query** to match the team's stack (Redux Toolkit, Vitest) — see decision #2.
+**Redux Toolkit Query** to match the team's stack (Redux Toolkit, Vitest) — see decision #2. The
+form layer and transport boundary were then moved onto **react-hook-form + zod**, also part of the
+stack — see decision #10.
 
 **Time spent: ~4 hours total** — reading the codebase and planning, implementing all tasks,
 the post-implementation self-review, and the follow-up robustness hardening (mutation error
-handling + `finishedAt` type) described in decision #8 below.
+handling + `finishedAt` type) described in decision #6 below. (The react-hook-form + zod adoption
+in decision #10 was a later add-on beyond that.)
 
 The sections below state, for each task, **what the actual problem was** (grounded in the original
 code) and **how it was solved**.
@@ -32,9 +35,10 @@ code) and **how it was solved**.
 | --- | --- | --- |
 | Client app entry | [client/src/App.tsx](client/src/App.tsx) | Thin wiring layer over `useTodos`. |
 | Data layer | [client/src/store/](client/src/store/) | RTK Query `todosApi` slice + store; `useTodos` integrates it. |
-| Sort util | [client/src/lib/sortTodos.ts](client/src/lib/sortTodos.ts) | F7 ordering, pure + unit-tested. |
+| Sort util | [client/src/hooks/useTodos.ts](client/src/hooks/useTodos.ts) | F7 ordering, pure + unit-tested. |
+| Schemas | [client/src/lib/schemas.ts](client/src/lib/schemas.ts) | zod source of truth: label validation + response parsing (decision #10). |
 | UI components | [client/src/components/](client/src/components/) | Treat as **pure** presentational components. Do **not** change their props (README restriction). |
-| Form components | [client/src/components/form/](client/src/components/form/) | `Form` + `Input`, already controlled. |
+| Form components | [client/src/components/form/](client/src/components/form/) | `Form` (react-hook-form + zod) + controlled `Input`; props unchanged (decision #10). |
 | Stories / Tests | `client/src/**/stories/`, `client/src/**/*.test.*` | Storybook CSF3; Vitest suite. |
 | Server | [server/server.js](server/server.js), [server/db.json](server/db.json) | `json-server`, single `/items` resource on `http://localhost:3000`. |
 
@@ -101,8 +105,8 @@ previously hand-rolled — loading/error state, the manual `upsert`, and cache b
 declarative cache invalidation, and is exercised end-to-end by the Vitest suite. The earlier
 version centralized the same logic in `useTodos` over a `fetch` client in `api/todos.ts`; the
 migration preserved the public hook contract, so it was a drop-in swap behind `App`. Sorting (F7)
-and counts (F8) remain **`useMemo`-derived** from the cached `items` array (in
-[`lib/sortTodos.ts`](client/src/lib/sortTodos.ts), unit-tested) — deriving rather than storing
+and counts (F8) remain **`useMemo`-derived** from the cached `items` array (the F7 sort lives
+inline in [`useTodos`](client/src/hooks/useTodos.ts), unit-tested) — deriving rather than storing
 avoids state that can drift out of sync.
 
 ### 3. Using the S1 endpoint only for the "done" direction (F5)
@@ -149,23 +153,44 @@ mid-session: the alert appears, no unhandled rejection fires, and a retry after 
   simple inline alert text in `App` (see #6). Enough for the assignment; a production app would add
   dismissible toasts, retry (trivial to add now via RTK Query's `refetch`/optimistic
   `onQueryStarted`), and per-row error affordances.
-- **`react-hook-form` + `zod` not adopted** — both are on the team's stack and would be my choice in
-  a larger app (RHF for form state, a zod schema to validate the label *and* parse the server
-  response at the transport boundary). Here the `Form` is a single controlled input and the data
-  shape is fixed, so adding them earns little over the current controlled component; I left them out
-  deliberately rather than from unfamiliarity. RTK Query was the higher-value stack adoption and was
-  done (decision #2).
 
 ### 9. Tests (Vitest)
 A focused [Vitest](https://vitest.dev/) suite covers the parts most worth protecting:
-- [`lib/sortTodos.test.ts`](client/src/lib/sortTodos.test.ts) — the F7 ordering rule (todo-before-done,
-  then `createdAt` desc) and that it doesn't mutate its input. Pure, no mocks.
 - [`hooks/useTodos.test.tsx`](client/src/hooks/useTodos.test.tsx) — drives the real RTK Query
-  transport against an in-memory `fetch` stand-in: load + sort + derived counts (F2/F7/F8), a load
-  failure surfacing into `error` (decision #6), and `addItem` performing a POST and reflecting the
-  new item after cache invalidation/refetch (F3).
+  transport against an in-memory `fetch` stand-in: load + the F7 sort (todo-before-done, then
+  `createdAt` desc) + derived counts (F2/F7/F8), a load failure surfacing into `error` (decision #6),
+  a malformed payload caught at the transport boundary (decision #10), and `addItem` performing a
+  POST and reflecting the new item after cache invalidation/refetch (F3).
+- [`components/form/Form.test.tsx`](client/src/components/form/Form.test.tsx) — the react-hook-form +
+  zod behavior (decision #10): an empty/whitespace label is rejected with an inline alert, a valid
+  entry submits the trimmed label, and cancel bypasses validation.
 Run with `pnpm test` (`vitest run`) or `pnpm test:watch`. The data layer is structured so the
 remaining mutations are straightforward to add in the same style.
+
+### 10. `react-hook-form` + `zod` adoption
+Both are on the team's stack. They're now wired in two places, with one zod schema module
+([`lib/schemas.ts`](client/src/lib/schemas.ts)) as the single source of truth:
+
+- **Form state + validation (`Form`).** [`Form`](client/src/components/form/Form.tsx) uses
+  `useForm` with a `zodResolver(labelSchema)`; a `Controller` bridges the existing controlled
+  `Input` so **its props stay untouched**. The `Form`'s own public props
+  (`initialValue`/`onSubmit`/`onCancel`) are **unchanged** — only the internals changed — so the
+  README "don't modify provided components' props" constraint still holds. `onSubmit` now fires
+  only for a valid label: `labelSchema`'s `.trim().min(1)` rejects empty/whitespace entries
+  (previously an empty label could be submitted) and hands `onSubmit` the trimmed string; the
+  validation message renders inline as a `role="alert"`.
+- **Transport boundary (`todosApi`).** Every item-returning endpoint parses its response through
+  `todoItemSchema` / `todoItemsSchema` in `transformResponse` (see decision #2). A malformed payload
+  throws there and surfaces as the query/mutation `error` rather than flowing untyped into the cache.
+- **One source of truth.** `TodoItem`/`NewTodoItem` in [`types.ts`](client/src/types.ts) are now
+  `z.infer`-ed from `todoItemSchema`, so the runtime check and the static type cannot drift.
+
+**Reasoning.** This was originally left out as low-value for a single fixed-shape field (former
+decision #8). On reflection the schema-as-source-of-truth + parse-at-the-boundary pattern is exactly
+where these libraries pay off even at this size, and it matches the stack; the cost stayed contained
+because the controlled `Input` plugged into RHF via `Controller` with no prop changes. Covered by
+[`Form.test.tsx`](client/src/components/form/Form.test.tsx) (empty rejected, trimmed submit, cancel)
+and a transport-boundary case in `useTodos.test.tsx` (decision #9).
 
 ---
 

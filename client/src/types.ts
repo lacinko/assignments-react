@@ -1,16 +1,14 @@
-export type TodoItem = {
-    id: number;
-    label: string;
-    isDone: boolean;
-    /** Epoch milliseconds, stamped by the server on creation. */
-    createdAt: number;
-    /**
-     * Epoch milliseconds, stamped by the server when the item is marked done (S1).
-     * `null` once the item is un-completed (the server clears it); absent before
-     * it has ever been completed.
-     */
-    finishedAt?: number | null;
-};
+import { z } from "zod";
+
+import { todoItemSchema } from "./lib/schemas";
+
+/**
+ * A todo item, inferred from `todoItemSchema` (decision #8) so the runtime
+ * validation at the transport boundary and this static type stay in lockstep.
+ * `finishedAt` is stamped by the server when an item is marked done (S1);
+ * `null` once un-completed, absent before it has ever been completed.
+ */
+export type TodoItem = z.infer<typeof todoItemSchema>;
 
 /** Payload accepted when creating a new item. The server stamps `createdAt`. */
 export type NewTodoItem = Pick<TodoItem, "label" | "isDone">;

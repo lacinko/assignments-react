@@ -85,6 +85,19 @@ describe("useTodos", () => {
         await waitFor(() => expect(result.current.error).toBe("Failed to load todo items"));
     });
 
+    it("surfaces a malformed payload from the transport boundary into error (decision #8)", async () => {
+        // `isDone` as a string violates todoItemSchema, so transformResponse throws.
+        const fetchMock = vi.fn(() =>
+            Promise.resolve(json([{ id: 1, label: "bad", isDone: "nope", createdAt: 100 }])),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { result } = renderHook(() => useTodos(), { wrapper: wrapper() });
+
+        await waitFor(() => expect(result.current.error).toBe("Failed to load todo items"));
+        expect(result.current.items).toEqual([]);
+    });
+
     it("adds an item via POST and reflects it after refetch (F3)", async () => {
         const { fetchMock, getItems } = makeServer([]);
         vi.stubGlobal("fetch", fetchMock);
