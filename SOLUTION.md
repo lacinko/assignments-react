@@ -19,7 +19,7 @@ repo-config quirk, unrelated to the solution code.)
 The data layer was subsequently migrated from a hand-rolled `fetch` client + `useState` to
 **Redux Toolkit Query** to match the team's stack (Redux Toolkit, Vitest) — see decision #2.
 
-**Time spent: ~3 hours total** — reading the codebase and planning, implementing all tasks,
+**Time spent: ~4 hours total** — reading the codebase and planning, implementing all tasks,
 the post-implementation self-review, and the follow-up robustness hardening (mutation error
 handling + `finishedAt` type) described in decision #8 below.
 
