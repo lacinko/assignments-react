@@ -110,11 +110,20 @@ and counts (F8) remain **`useMemo`-derived** from the cached `items` array (the 
 inline in [`useTodos`](client/src/hooks/useTodos.ts), unit-tested) — deriving rather than storing
 avoids state that can drift out of sync.
 
-### 3. Using the S1 endpoint only for the "done" direction (F5)
-`setDone(id, isDone)` calls the custom `PATCH /items/:id/done` endpoint **only when marking done**
-(so the server stamps `finishedAt`), and falls back to a generic `PATCH { isDone:false,
-finishedAt:null }` when un-checking. **Reasoning:** S1 is defined as a one-way "mark as done"
-operation; un-completing is not part of its contract, so I didn't overload it.
+### 3. The S1 `/done` endpoint owns the whole done-state transition (F5)
+`setDone(id, isDone)` calls `PATCH /items/:id/done` for **both** directions, with `{ isDone }` in
+the body; the server stamps `finishedAt` when marking done and clears it to `null` when
+un-completing. **Reasoning:** the real invariant is "`finishedAt` is set iff `isDone`", and a server
+that owns one direction but not the other leaves that invariant half-enforced on the **client** — an
+anti-pattern, since any generic `PATCH` could then desync `isDone` and `finishedAt`. Routing the
+single logical "toggle done" operation through one endpoint makes the server the sole guardian of
+the timestamp and removes the client-side branch on two incompatible request shapes. (An earlier
+version used the `/done` endpoint only for the done direction and a generic `PATCH { isDone:false,
+finishedAt:null }` to un-complete; this replaces that asymmetry.) The endpoint still defaults
+`isDone` to `true` when the body is omitted, so the original one-way "mark as done" call shape keeps
+working. A more REST-purist alternative is to model completion as a sub-resource
+(`POST`/`DELETE /items/:id/done`); the single body-driven `PATCH` was chosen as the smaller change
+that still fixes the ownership problem.
 
 ### 4. State updates from server responses, not optimistic guesses
 Every mutation (`add/editLabel/toggleDone`) updates local state from the **object the server
@@ -238,8 +247,8 @@ The README asks how the AI was *directed*, not how much was used. Summary of the
   driving the running app in a headless browser — every CRUD flow plus the **server-down failure
   path** — rather than trusting the diff alone.
 - **Direction over autopilot.** Key judgment calls (the F3/F4 prop-constraint tension, the S1
-  one-way semantics) were decided explicitly and recorded above rather than left to the model's
-  default — these are the points discussed in the section above.
+  endpoint owning both done directions) were decided explicitly and recorded above rather than left
+  to the model's default — these are the points discussed in the section above.
 
 ---
 
@@ -310,9 +319,9 @@ submit `PATCH /items/:id` with `{ label }`, update state, exit edit mode; cancel
 ### F5 — Complete a todo item
 **Problem.** `Checkbox` `onCheckedChange` isn't wired to persistence; Radix passes
 `CheckedState` (`boolean | "indeterminate"`), not a plain boolean.
-**Fix.** On toggle, coerce to boolean and `PATCH /items/:id` with `{ isDone }`. Once **S1** exists,
-use the custom done endpoint when marking done (so `finishedAt` is set). Update state from the
-response.
+**Fix.** On toggle, coerce to boolean and call the **S1** done endpoint
+`PATCH /items/:id/done` with `{ isDone }` for both directions (the server owns `finishedAt` —
+decision #3). Update state from the response.
 
 ### F6 — Delete a todo item
 **Problem.** Trash button has no handler.
@@ -387,22 +396,26 @@ story description or use a play function/hover interaction).
 **Problem.** `json-server`'s generic `PATCH /items/:id` can set `isDone`, but the assignment wants a
 dedicated endpoint that also stamps `finishedAt`.
 **Fix.** In [server/server.js](server/server.js), register a custom route **before**
-`server.use(router)`:
+`server.use(router)`. It owns the done-state transition in **both** directions so the server is the
+sole guardian of `finishedAt` (decision #3): mark done stamps it, un-complete clears it. `isDone`
+defaults to `true` when the body is omitted, preserving the original one-way call shape.
 ```js
 server.patch("/items/:id/done", (req, res) => {
     const db = router.db;                       // lowdb instance
-    const item = db.get("items").find({ id: Number(req.params.id) }).value();
+    const id = Number(req.params.id);
+    const item = db.get("items").find({ id }).value();
     if (!item) return res.status(404).jsonp({ error: "Not found" });
+    const isDone = req.body?.isDone ?? true;
     const updated = db.get("items")
-        .find({ id: Number(req.params.id) })
-        .assign({ isDone: true, finishedAt: Date.now() })
+        .find({ id })
+        .assign({ isDone, finishedAt: isDone ? Date.now() : null })
         .write();
     res.jsonp(updated);
 });
 ```
-Then in the client (F5), call `PATCH /items/:id/done` when marking an item done. The `TodoItem`
-type carries `finishedAt?: number | null` — `null` is what the server returns after un-completing
-(generic `PATCH { isDone:false, finishedAt:null }`), so the type models that explicitly.
+Then in the client (F5), `setDone` always calls `PATCH /items/:id/done` with `{ isDone }`. The
+`TodoItem` type carries `finishedAt?: number | null` — `null` is what the server returns after
+un-completing, so the type models that explicitly.
 
 ---
 

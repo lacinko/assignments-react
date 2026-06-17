@@ -82,17 +82,15 @@ export const todosApi = createApi({
             },
         }),
 
-        // F5 / S1: mark done via the dedicated endpoint (so the server stamps
-        // `finishedAt`); un-completing uses the generic PATCH and clears it.
+        // F5 / S1: toggle done-ness through the single dedicated endpoint for
+        // both directions; the server owns `finishedAt` (stamps it on done,
+        // clears it on un-complete) so the client never sets the timestamp.
         setDone: builder.mutation<TodoItem, { id: number; isDone: boolean }>({
-            query: ({ id, isDone }) =>
-                isDone
-                    ? { url: `/items/${id}/done`, method: "PATCH" }
-                    : {
-                          url: `/items/${id}`,
-                          method: "PATCH",
-                          body: { isDone: false, finishedAt: null },
-                      },
+            query: ({ id, isDone }) => ({
+                url: `/items/${id}/done`,
+                method: "PATCH",
+                body: { isDone },
+            }),
             transformResponse: (response: unknown) => todoItemSchema.parse(response),
             invalidatesTags: ["Todos"],
             async onQueryStarted({ id, isDone }, { dispatch, queryFulfilled }) {

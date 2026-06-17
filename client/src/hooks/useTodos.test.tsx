@@ -38,6 +38,16 @@ const makeServer = (initial: TodoItem[]) => {
             items.push(created);
             return json(created);
         }
+        // S1: the single done endpoint owns both directions and `finishedAt`.
+        const doneMatch = path.match(/^\/items\/(\d+)\/done$/);
+        if (doneMatch && method === "PATCH") {
+            const item = items.find((i) => i.id === Number(doneMatch[1]));
+            if (!item) return json({ error: "Item not found" }, 404);
+            const { isDone } = await request.json();
+            item.isDone = isDone;
+            item.finishedAt = isDone ? Date.now() : null;
+            return json(item);
+        }
         return json({ error: "unhandled" }, 404);
     });
 
@@ -96,6 +106,36 @@ describe("useTodos", () => {
 
         await waitFor(() => expect(result.current.error).toBe("Failed to load todo items"));
         expect(result.current.items).toEqual([]);
+    });
+
+    it("toggles done both ways via the single /done endpoint, server owning finishedAt (decision #3)", async () => {
+        const { fetchMock, getItems } = makeServer([
+            { id: 1, label: "task", isDone: false, createdAt: 100 },
+        ]);
+        vi.stubGlobal("fetch", fetchMock);
+
+        const { result } = renderHook(() => useTodos(), { wrapper: wrapper() });
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+        // Mark done: server stamps finishedAt.
+        await act(async () => {
+            await result.current.toggleDone(1, true);
+        });
+        await waitFor(() => expect(result.current.items[0].isDone).toBe(true));
+        expect(typeof getItems()[0].finishedAt).toBe("number");
+
+        // Un-complete: same endpoint, server clears finishedAt to null.
+        await act(async () => {
+            await result.current.toggleDone(1, false);
+        });
+        await waitFor(() => expect(result.current.items[0].isDone).toBe(false));
+        expect(getItems()[0].finishedAt).toBeNull();
+
+        // Every done-toggle goes through /items/:id/done — never a generic PATCH.
+        const doneCalls = fetchMock.mock.calls.filter(
+            ([input]) => input instanceof Request && new URL(input.url).pathname === "/items/1/done",
+        );
+        expect(doneCalls).toHaveLength(2);
     });
 
     it("rolls back an optimistic delete on failure and retries it (decision #11)", async () => {
